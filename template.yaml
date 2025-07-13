@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: A minimal project to verify JWT custom claims with a Lambda Authorizer (Final Corrected Version).
+
+Resources:
+  MyApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Auth:
+        DefaultAuthorizer: MyLambdaAuthorizer
+        ApiKeyRequired: true
+        Authorizers:
+          MyLambdaAuthorizer:
+            FunctionArn: !GetAtt AuthorizerFunction.Arn
+            Identity:
+              Header: Authorization
+
+  AuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: java21
+      MemorySize: 512
+      Timeout: 30
+      CodeUri: .
+      Handler: com.example.AuthHandler::handleRequest
+      Events:
+        AuthApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MyApi
+            Path: /auth/token
+            Method: post
+            Auth:
+              Authorizer: NONE
+              ApiKeyRequired: true
+
+  AuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: java21
+      MemorySize: 512
+      Timeout: 30
+      CodeUri: .
+      Handler: com.example.AuthorizerHandler::handleRequest
+
+  ProtectedFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: java21
+      MemorySize: 512
+      Timeout: 30
+      CodeUri: .
+      Handler: com.example.ProtectedHandler::handleRequest
+      Events:
+        ProtectedApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MyApi
+            Path: /hello
+            Method: get
+
+  # ユーザー管理 (CRUD) を一手に引き受ける単一のLambda関数
+  AdminUsersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: java21
+      CodeUri: .
+      Handler: com.example.AdminUsersHandler::handleRequest # 新しいハンドラクラス
+      Events:
+        ListUsers:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MyApi
+            Path: /admin/users
+            Method: get
+
+        CreateUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MyApi
+            Path: /admin/users
+            Method: post
+
+        GetUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MyApi
+            Path: /admin/users/{userId} # パスパラメータを使用
+            Method: get
+
+        UpdateUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MyApi
+            Path: /admin/users/{userId}
+            Method: put
+
+        DeleteUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MyApi
+            Path: /admin/users/{userId}
+            Method: delete
+
+        PatchUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MyApi
+            Path: /admin/users/{userId}
+            Method: patch
+
+
+  # A社用のAPIキー
+  ApiKeyForCompanyA:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Name: CompanyAKey
+      Enabled: true
+
+  # B社用のAPIキー
+  ApiKeyForCompanyB:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Name: CompanyBKey
+      Enabled: true
+
+  # A社用の使用量プラン (1000回/分)
+  UsagePlanForCompanyA:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      UsagePlanName: PlanForCompanyA
+      ApiStages:
+        - ApiId: !Ref MyApi
+          Stage: Prod
+      Throttle:
+        RateLimit: 16.67 # 1000回/分 ≈ 16.67回/秒
+        BurstLimit: 50   # バースト上限
+
+  # B社用の使用量プラン (60回/分)
+  UsagePlanForCompanyB:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      UsagePlanName: PlanForCompanyB
+      ApiStages:
+        - ApiId: !Ref MyApi
+          Stage: Prod
+      Throttle:
+        RateLimit: 5
+        BurstLimit: 5
+
+  # APIキーを使用量プランに紐付ける
+  UsagePlanKeyForCompanyA:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref ApiKeyForCompanyA
+      KeyType: API_KEY
+      UsagePlanId: !Ref UsagePlanForCompanyA
+
+  UsagePlanKeyForCompanyB:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref ApiKeyForCompanyB
+      KeyType: API_KEY
+      UsagePlanId: !Ref UsagePlanForCompanyB
+
+Outputs:
+  ApiEndpoint:
+    Description: "API Gateway endpoint URL for Prod stage"
+    Value: !Sub "https://${MyApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
